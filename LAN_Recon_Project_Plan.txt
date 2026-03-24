@@ -1,0 +1,179 @@
+﻿
+LAN RECON
+Network Surveillance & Attack Simulation Tool
+
+Full Project Plan — Home Lab / VM Edition
+4th Year CS Portfolio Project  |  Java + React + WebSocket
+  SCOPE    All techniques in this document are intended for use on your own VMs, your own router, and your own home lab network. Never run these on public or shared networks.
+
+1. Project Overview
+LAN Recon is a full-stack network surveillance and attack simulation tool built entirely from scratch. It combines passive packet analysis, active scanning, and live MITM capabilities into a single cinematic React dashboard — giving you a real-time window into everything happening on a network.
+
+  THE DEMO MOMENT    You boot your VM lab, open LAN Recon, and within 30 seconds the dashboard shows every device, every open port, every DNS query, every app fingerprint — and with one click you become the invisible router between two VMs, injecting a banner into every webpage they visit.
+
+1.1 Core Goals
+• Build something genuinely terrifying and impressive — not a tutorial rehash
+• Demonstrate deep knowledge of Layer 2–7 networking from first principles
+• Produce a live, visual, demo-able project with a 30-second wow moment
+• Show attack AND defense thinking — the mindset security teams hire for
+
+1.2 What Makes This Different
+• Every protocol is parsed by hand — no Wireshark, no shortcuts
+• Covers the full stack: ARP (L2), IP/TCP/UDP (L3/L4), DNS/HTTP/TLS (L7)
+• Both offensive (MITM, inject, spoof) and defensive (detect, alert, baseline) modules
+• A React dashboard that looks like a movie hacking scene but shows real data
+
+2. System Architecture
+LAN Recon is split into three layers: a Java backend that does all the heavy networking work, a WebSocket bridge for real-time streaming, and a React frontend for the dashboard.
+
+ComponentTechnologyWhy this choicePacket capturepcap4j (Java)Wraps libpcap/WinPcap — lets you capture raw frames at the network interface level before the OS TCP stack processes themRaw socket opsJava + JNI / pcap4j rawSend crafted ARP, ICMP, TCP SYN packets without going through the OS socket APIBackend APISpring Boot + WebSocketREST endpoints for config/control; STOMP WebSocket for streaming live events to the frontendFrontendReact + D3.jsForce-directed network graph (D3), live event feed, per-device drawer, threat score gaugeStylingTailwind CSSUtility-first CSS — fast to build, looks sharpData storeIn-memory + SQLiteDevice state and session history stored in SQLite; live metrics in-memory for speedLab environmentVirtualBox / VMware + pfSense2-3 VMs on a host-only network + pfSense VM as the router
+2.1 Data Flow
+pcap4j captures frames at the NIC level on the host. A dispatcher thread classifies each frame by EtherType and protocol, then routes it to the correct analyser module. Each analyser emits structured events which the WebSocket server streams to the React dashboard in real time.
+
+NIC (raw frames)
+  └── pcap4j capture thread
+        └── FrameDispatcher (EtherType router)
+              ├── ArpAnalyser      → device discovery, spoof detection
+              ├── IpAnalyser       → OS fingerprint, bandwidth tracking
+              ├── TcpAnalyser      → port scan engine, session reconstruct
+              ├── DnsAnalyser      → query timeline, spoof engine
+              ├── HttpAnalyser     → request/response reconstruct, inject
+              └── TlsAnalyser      → JA3 fingerprint
+                    └── EventBus → WebSocket → React Dashboard
+
+3. Feature Specification
+3.1 Passive Sniffing (Zero Packets Sent)
+These features are completely invisible on the network. No packets are sent — you are purely listening.
+
+FeatureTypeWhat it doesDemo momentARP sweep + device discoveryPassive/ActiveBroadcast ARP request for all IPs in the subnet. Parse replies to build device table with MAC, IP, hostname.Every device on the network appears within 2 seconds of startupMAC vendor lookupPassiveFirst 3 bytes (OUI) of MAC address mapped to manufacturer database (IEEE OUI list). Identify Apple, Samsung, Xiaomi, Cisco."This is an Apple device" without any network requestOS fingerprintingPassiveAnalyse TCP SYN packets: TTL value (Linux=64, Windows=128, macOS=64), TCP window size, TCP options order. Build OS guess per device."VM1 is running Linux, VM2 is Windows" from packet headers aloneDNS query timelinePassiveCapture UDP port 53. Parse DNS question/answer sections. Build per-device timeline of every domain queried with timestamps.Live feed: "Device X just looked up netflix.com, instagram.com, doubleclick.net"Per-device bandwidth monitorPassiveCount bytes in/out per source MAC per second. Detect upload bursts, streaming patterns, idle vs active. Render as sparklines."VM2 just uploaded 40MB in 8 seconds to 185.x.x.x"TLS/JA3 fingerprintingPassiveParse TLS ClientHello frame. Extract cipher suites, extensions list, elliptic curves, EC point formats. MD5-hash to produce JA3 string. Match against JA3 database."This device is running Chrome 120, Spotify, and a Python requests script" — from encrypted traffic
+3.2 Active / MITM Attacks (Your Lab Only)
+These features actively inject packets into the network. Only use on VMs and networks you own.
+
+FeatureTypeWhat it doesDemo momentARP spoof MITM engineActive / MITMSend gratuitous ARP replies to two targets (e.g. VM and router), poisoning both caches so traffic flows through your machine. Enable IP forwarding to stay transparent.Flip a switch in the UI — you are now the invisible router between two VMs. Neither knows.SSL strip + HTTP injectActive / MITMIntercept HTTP traffic while MITM is active. Inject arbitrary HTML/JS into every webpage response. Demo: inject a red banner reading YOU ARE BEING MONITORED.Target VM opens a website. Your custom banner appears on every page. Shows exactly why HSTS exists.DNS spoofingActive / MITMWhile MITM is active, intercept DNS queries and return forged A records pointing any domain to your IP. Serve a custom clone page at that address.Target types google.com. They land on your page. Textbook phishing demo.Packet drop / latency injectorActive / MITMUse iptables or manual drop logic to selectively discard or delay packets to a target device. Configurable drop rate (0–100%) and added latency (0–500ms).Drag the lag slider in your UI. Watch the target VM's connection visibly suffer.DHCP starvation (demo)ActiveFlood DHCP server with requests using random spoofed MACs, exhausting the IP pool. New devices can no longer get an IP.Start the attack, try to connect a new VM — it fails to get an IP.
+3.3 Forensics + Detection (The Defender Side)
+This is what makes the project impressive to security teams — you understand the attack well enough to detect it.
+
+FeatureTypeWhat it doesDemo momentARP poisoning detectorDefenseMonitor ARP traffic for IP-to-MAC mapping conflicts. If a MAC changes for a known IP, or if gratuitous ARPs arrive unexpectedly, raise an alert.Run your own ARP spoof — your detector catches it within 3 seconds.Port scan detectorDefenseDetect SYN flood patterns: >20 SYN packets to different ports from one source in <5 seconds. Distinguish between connect scan, SYN scan, and UDP scan.Run nmap against your own VM — dashboard shows "Port scan detected from 192.168.x.x".DNS tunnel detectorDefenseAnalyse DNS query entropy. Flag: unusually long subdomains (>30 chars), high query frequency to one domain, base64-looking subdomains.Run iodine or dnscat2 on a VM — your tool flags it within 30 seconds.Behavioural baseline + anomalyDefenseLearn each device's normal pattern for 10 minutes (avg bandwidth, top domains, connection rate). Then flag anything 2 standard deviations outside the baseline.A VM starts doing something unusual — the dashboard marks it amber/red.Covert channel detectorDefenseDetect port knocking sequences, data hidden in ICMP payload (ping tunnels), unusual ICMP echo sizes.Run ptunnel or icmptunnel on a VM — detector flags the abnormal ICMP sizes.Session recorder + PCAP replayDefense / ForensicSave any device's traffic to a .pcap file. Replay it in the dashboard timeline later. Scrub through time, jump to events."Let me rewind 5 minutes and show you exactly what that VM was doing."
+3.4 HTTP Session Reconstructor
+When ARP spoof MITM is active, the HTTP analyser reassembles TCP streams and reconstructs full HTTP transactions.
+
+• Reassemble TCP segments in correct sequence order (handle out-of-order, retransmits)
+• Parse HTTP/1.1 request: method, URL, headers, body
+• Parse HTTP response: status code, content-type, body
+• Detect form POSTs — flag requests containing password= or login= fields
+• Render reconstructed sessions as a readable timeline in the dashboard
+• Search/filter sessions by device, domain, method, or keyword
+
+  DEMO MOMENT    A VM submits a login form over HTTP. LAN Recon shows the full request including the username and password field in plaintext. Then show the same over HTTPS — nothing visible. This is the most effective explanation of why HTTPS matters that exists.
+
+4. React Dashboard
+4.1 Main Panels
+
+PanelDescriptionNetwork GraphD3 force-directed graph. Devices as nodes, active connections as animated edges. Node size = bandwidth usage. Edge thickness = traffic volume. Nodes pulse on activity. Clicking a node opens the device detail drawer.Device CardsGrid of cards per discovered device. Shows: IP, MAC, vendor icon, OS guess, threat score (0–100, colour-coded green/amber/red), open ports, last seen, top domains.Live Event FeedScrolling real-time log of network events: new device joined, DNS query, port scan detected, ARP conflict, HTTP POST intercepted, MITM enabled. Colour-coded by severity.DNS TimelinePer-device scrollable timeline of DNS queries. Group by category: social media, streaming, ad networks, trackers, unknown. Sparkline of query frequency.MITM Control PanelToggle ARP spoof per target pair. Enable/disable SSL strip, DNS spoof, packet drop. Latency slider. Injection script editor (the HTML/JS to inject into HTTP pages).Session ViewerReconstructed HTTP sessions. Expandable rows showing full request and response. Flag icon on requests with credential fields detected. PCAP export button.Alerts PanelAggregated security alerts with severity level, description, affected device, and timestamp. Acknowledge / investigate actions.
+4.2 Threat Score Algorithm
+Each device gets a live threat score (0–100). Updated every 5 seconds.
+
+• New device (not seen before): +20 points
+• Open port 22 (SSH): +10 points
+• Open ports 3389, 5900 (RDP, VNC): +15 points each
+• DNS query rate spike (>3x baseline): +20 points
+• High-entropy DNS subdomain detected: +25 points
+• Unusual upload burst: +15 points
+• ARP conflict involving this device: +30 points
+• Behaviour deviation >2 sigma from baseline: +20 points
+
+Score 0–30 = green (normal). Score 31–60 = amber (watch). Score 61–100 = red (alert).
+
+5. 3-Week Build Plan
+
+WeekFocusTasksDeliverableWeek 1 Days 1–7Foundation + passive scanningSet up lab (VirtualBox, 3 VMs, host-only network). Java project with pcap4j. ARP sweep + device discovery. MAC OUI lookup. OS fingerprinting from TTL/window. DNS query capture and parser. Spring Boot REST API. Basic React device card grid.Working scanner: device list updates live in browserWeek 2 Days 8–14Active attacks + MITM engineARP spoof engine (bidirectional poisoning + IP forwarding). HTTP session reconstructor (TCP stream reassembly). SSL strip + HTML injection. DNS spoof module. WebSocket event stream. D3 force graph in React. MITM control panel UI.Full MITM working: browser on VM2 shows injected bannerWeek 3 Days 15–21Detection + polish + demoTLS/JA3 fingerprinting. Intrusion detection (port scan, ARP storm, DNS tunnel). Behavioural baseline + anomaly detection. Threat score engine. Per-device bandwidth sparklines. PCAP session recorder. Alert panel. Demo video recording. README + writeup.Complete tool — demo video ready to post
+5.1 Daily Breakdown — Week 1
+• Day 1: Lab setup. Install VirtualBox, create 3 VMs (Ubuntu, Windows, Kali). Configure host-only network. Verify connectivity.
+• Day 2: Java project setup. Add pcap4j dependency. Write FrameCapture class that prints raw frame hex. Confirm you can see packets.
+• Day 3: ARP sweep. Craft ARP request broadcast. Parse replies. Build DeviceRegistry with MAC, IP, hostname.
+• Day 4: MAC OUI lookup. Download IEEE OUI CSV. Build OUI lookup class. Add vendor name to device cards.
+• Day 5: OS fingerprinting. Extract TTL from IP header, TCP window size from TCP header. Build OsGuesser class.
+• Day 6: DNS capture. Filter UDP port 53. Parse DNS question section (QNAME, QTYPE). Build DnsEvent model.
+• Day 7: Spring Boot setup. REST endpoint GET /devices. WebSocket config. React app scaffold. Device cards rendering from API.
+
+5.2 Daily Breakdown — Week 2
+• Day 8: ARP spoof engine. Send continuous gratuitous ARP replies to both targets. Enable IP forwarding (sysctl net.ipv4.ip_forward=1).
+• Day 9: Verify MITM working. tcpdump on host — confirm you see traffic between VM1 and VM2. Fix forwarding issues.
+• Day 10: TCP stream reassembler. Track TCP sequences per (src, dst, sport, dport) tuple. Reassemble ordered payload.
+• Day 11: HTTP parser. Parse reassembled TCP payload as HTTP/1.1. Extract method, URL, headers, body. Detect POST with credentials.
+• Day 12: HTTP injector. Modify HTTP response body before forwarding. Insert <div> banner at end of <body> tag. Test in VM browser.
+• Day 13: DNS spoof. Intercept DNS query while MITM active. Send forged DNS reply with target IP. Serve page on that IP.
+• Day 14: WebSocket streaming. All events (device join, DNS query, HTTP session, MITM toggle) stream to React. D3 graph renders.
+
+5.3 Daily Breakdown — Week 3
+• Day 15: JA3 fingerprinting. Parse TLS ClientHello. Extract cipher suites list, extensions list. Compute MD5 hash. Match JA3 database CSV.
+• Day 16: Port scan detector. Sliding window counter per source IP. Alert if >20 distinct destination ports in 5 seconds.
+• Day 17: ARP poisoning detector. Track IP-to-MAC mapping. Alert on any change. Cross-reference with known device list.
+• Day 18: DNS tunnel detector. Flag queries with subdomain entropy > threshold. Flag domains with >50 queries/minute.
+• Day 19: Behavioural baseline. 10-minute learning window per device. Compute mean/stddev for bandwidth, DNS rate, connection count. Live anomaly scoring.
+• Day 20: Threat score engine. Aggregate all signals into per-device score. Colour-code device cards. Alert panel.
+• Day 21: Demo video. Record 3-minute screen capture showing: device discovery, MITM enable, banner inject, DNS spoof, intrusion detect. Write README.
+
+6. CS Concepts You Will Master
+This is what you tell interviewers. Every item below is something you built from scratch and can explain from first principles.
+
+ConceptWhat you built that proves itARP protocol (Layer 2)ARP sweep, ARP spoof engine, ARP poisoning detector — you understand why ARP has no authentication and what that meansIP addressing + subnetsYou scan a /24 subnet, parse IP headers, track TTL decrements — you know how IP routing worksTCP state machineTCP stream reassembler tracks sequence numbers, handles out-of-order segments, manages connection state — you built a mini TCP stackDNS protocol + hierarchyYou parse DNS wire format (labels, QTYPE, RDATA) and understand the full resolver chain — root → TLD → authoritativeTLS handshake internalsYou parse the ClientHello without decrypting — understanding cipher negotiation, SNI, extension formatNetwork security attacksYou implemented ARP spoof, SSL strip, DNS poison, packet injection — and understand exactly why each worksIntrusion detectionYou built anomaly detection from scratch — sliding windows, statistical baselines, entropy analysisConcurrent programmingMultiple capture threads, analyser threads, WebSocket event bus — thread safety, lock-free queues, async I/OProtocol parsingYou parse raw bytes into structured frames — understanding bit fields, endianness, variable-length fieldsFull-stack integrationJava backend → WebSocket → React frontend — real-time data pipeline end to end
+7. How to Talk About This in Interviews
+
+  OPENING LINE    "I built a network surveillance tool from scratch — no Wireshark, no shortcuts. It does passive device discovery, OS fingerprinting from TCP headers, live DNS monitoring, and a full man-in-the-middle engine that can inject HTML into any webpage a target visits — all visualised in a real-time React dashboard."
+
+When they ask: "How does ARP spoofing work?"
+"ARP has no authentication — any device can send a gratuitous ARP reply claiming to be any IP. I send continuous ARP replies to VM1 saying 'I am the router' and to the router saying 'I am VM1'. Both update their caches. Now all traffic flows through me. I enable IP forwarding so neither side notices. I can now read, modify, or drop any packet between them."
+
+When they ask: "How do you fingerprint an OS without sending a probe?"
+"Every OS has characteristic TCP behaviour baked into its kernel. Linux sets the initial TTL to 64, Windows to 128. The TCP receive window size at connection startup differs — Linux typically uses 29200 bytes, Windows 65535. The order of TCP options in the SYN packet also varies by OS. I read these values from the first packet a device sends and build a probability guess."
+
+When they ask: "How does JA3 fingerprinting work?"
+"Even though the TLS payload is encrypted, the ClientHello handshake message is sent in plaintext. It lists which cipher suites the client supports, which TLS extensions it includes, and which elliptic curves it prefers. Different applications — Chrome, Firefox, curl, Spotify — have different built-in lists. I extract those lists, concatenate them in a defined format, and MD5-hash the result. That hash is the JA3 fingerprint. Cloudflare uses exactly this in production."
+
+When they ask: "Why is this more impressive than a todo app?"
+"Because I touched every layer of the network stack from raw Ethernet frames to application-layer HTTP parsing. I understand why ARP has no security, why DNS is trivially spoofable, why HTTP is dangerous, and why TLS leaks metadata. I built the attack AND the detector for each one. Most people know these vulnerabilities from textbooks — I know them because I exploited them on my own lab."
+
+8. Home Lab Setup
+8.1 Required Setup
+• VirtualBox (free) or VMware Workstation Player
+• 3 VMs: Ubuntu 22.04 (victim 1), Windows 10 (victim 2), Kali Linux (optional — for cross-checking)
+• Network mode: Host-Only Adapter — all VMs + host on same virtual switch
+• Your host machine runs LAN Recon — it can see all VM traffic
+
+8.2 Optional — Router Simulation
+• Add a pfSense VM as the virtual router/gateway
+• Configure VMs to use pfSense as their default gateway
+• Now you can demonstrate full MITM between VM and gateway — exactly as it works on a real network
+
+8.3 Enabling MITM on Linux Host
+# Enable IP forwarding (required for transparent MITM)
+sudo sysctl -w net.ipv4.ip_forward=1
+
+# Put WiFi card in promiscuous mode (captures all traffic on segment)
+sudo ip link set eth0 promisc on
+
+# Verify pcap4j can open the interface
+sudo java -jar lanrecon.jar --interface eth0 --list-devices
+
+9. README & Portfolio Presentation
+9.1 GitHub README Must-Haves
+• A 30-second GIF or demo video at the very top — device discovery happening live
+• Architecture diagram showing pcap4j → Java modules → WebSocket → React
+• "How it works" section explaining ARP sweep, OS fingerprint, JA3 — in plain English
+• "What I learned" section — be specific, mention TCP sequence reassembly, JA3, ARP auth-less design
+• Lab setup instructions so anyone can reproduce it
+• Ethical disclaimer — clearly scoped to own lab/network
+
+9.2 Suggested Project Name Options
+• Argus — the Greek giant with 100 eyes. Perfect metaphor.
+• Specter — invisible, watching, terrifying
+• LanScope — functional, clear, professional
+• Wiretap — provocative, memorable
+
+9.3 LinkedIn Post Strategy
+Post a screen recording — not a description. 20 seconds showing: blank screen → devices appear → MITM enable → banner injected in VM browser. No explanation needed. The video is the explanation. Caption: "Built a network surveillance tool from scratch in Java. ARP sweep, OS fingerprinting, MITM engine, live React dashboard. Everything parsed by hand — no Wireshark. Running on my own VM lab."
+
+  EXPECTED OUTCOME    This type of project — visually striking, technically deep, with a clear demo moment — consistently gets 10,000–50,000 impressions on LinkedIn and results in direct messages from engineers at security, networking, and infrastructure companies.
+
+LAN Recon — Full Project Plan  |  For educational and lab use only
